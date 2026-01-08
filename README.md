@@ -171,23 +171,3 @@ This is normal in PoCs because IMU axis conventions vary across devices and orie
 2. Remove manual camera-height input via **ARKit/ARCore depth**.
 3. Use device-specific intrinsics and lens distortion correction.
 4. Add UX guidance (stability indicator, re-calibration prompts, quality scoring).
-
----
-
-## Suggested repository / project names
-
-**Short + clear**
-- `phone-measure-poc`
-- `mobile-measurement-poc`
-- `smart-measure-poc`
-- `camera-measure-poc`
-
-**Medical-context friendly (still general)**
-- `clinical-measurement-poc`
-- `mobile-clinical-metrics`
-- `care-measure-poc`
-
-**Brandable (neutral)**
-- `PocketMeasure`
-- `PlaneMeasure`
-- `MedMeasureLite`
