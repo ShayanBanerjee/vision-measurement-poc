@@ -109,7 +109,7 @@ Phone camera and motion sensors typically require **HTTPS**. Streamlit Community
 3. Deploy
 
 Once deployed, you’ll get a URL like:
-- `https://<your-app>.streamlit.app`
+- `https://vision-measurement-poc.streamlit.app`
 
 ---
 
