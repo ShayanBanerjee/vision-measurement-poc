@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IMU</title>
+
+    <!-- PoC: load Streamlit component lib from CDN -->
+    <script src="https://unpkg.com/streamlit-component-lib@1.6.0/dist/index.js"></script>
+
+    <style>
+      body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      .wrap { padding: 10px; }
+      button { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.15); background: white; font-size: 14px; }
+      .row { margin-top: 8px; font-size: 12px; opacity: 0.85; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    </style>
+  </head>
+
+  <body>
+    <div class="wrap">
+      <button id="btn">Enable motion sensors</button>
+      <div class="row" id="status">Status: idle</div>
+      <div class="row"><code id="vals">alpha: -, beta: -, gamma: -</code></div>
+    </div>
+
+    <script>
+      const btn = document.getElementById("btn");
+      const statusEl = document.getElementById("status");
+      const valsEl = document.getElementById("vals");
+
+      let granted = false;
+      let last = { alpha: null, beta: null, gamma: null, ts: null };
+      let started = false;
+      let pollHz = 15;
+
+      function setStatus(s) { statusEl.textContent = "Status: " + s; }
+
+      function pushValue() {
+        if (!window.Streamlit) return;
+        window.Streamlit.setComponentValue({
+          ...last,
+          granted: granted,
+          ua: navigator.userAgent
+        });
+        window.Streamlit.setFrameHeight(110);
+      }
+
+      function handleOrientation(ev) {
+        last = { alpha: ev.alpha, beta: ev.beta, gamma: ev.gamma, ts: Date.now() };
+        valsEl.textContent =
+          "alpha: " + (last.alpha?.toFixed?.(1) ?? "-") +
+          ", beta: " + (last.beta?.toFixed?.(1) ?? "-") +
+          ", gamma: " + (last.gamma?.toFixed?.(1) ?? "-");
+      }
+
+      async function enable() {
+        try {
+          if (started) return;
+          started = true;
+
+          // iOS Safari permission gate
+          if (typeof DeviceOrientationEvent !== "undefined" &&
+              typeof DeviceOrientationEvent.requestPermission === "function") {
+            const resp = await DeviceOrientationEvent.requestPermission();
+            granted = (resp === "granted");
+          } else {
+            granted = true;
+          }
+
+          if (!granted) {
+            setStatus("permission denied");
+            pushValue();
+            return;
+          }
+
+          window.addEventListener("deviceorientation", handleOrientation, true);
+          setStatus("listening");
+
+          // periodic push
+          setInterval(pushValue, Math.max(50, Math.floor(1000 / pollHz)));
+        } catch (e) {
+          setStatus("error: " + e);
+          pushValue();
+        }
+      }
+
+      btn.addEventListener("click", enable);
+
+      function onRender(event) {
+        // read args (optional)
+        const args = event.detail.args || {};
+        if (args.poll_hz) pollHz = args.poll_hz;
+        pushValue();
+      }
+
+      window.Streamlit.events.addEventListener(window.Streamlit.RENDER_EVENT, onRender);
+      window.Streamlit.setComponentReady();
+      window.Streamlit.setFrameHeight(110);
+    </script>
+  </body>
+</html>
