@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IMU Capture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 16px; }
+    button { padding: 12px 14px; border-radius: 10px; border: 1px solid #ccc; background: #fff; width: 100%; margin: 8px 0; }
+    .card { padding: 12px; border: 1px solid #ddd; border-radius: 12px; margin-top: 12px; }
+    code { font-family: ui-monospace, Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <h2>IMU Capture (Top-level page)</h2>
+
+  <div class="card">
+    <div>Return URL:</div>
+    <code id="ret">-</code>
+  </div>
+
+  <button id="btnEnable">Enable motion sensors</button>
+  <button id="btnSend" disabled>Send to Streamlit</button>
+
+  <div class="card">
+    <div>Status: <span id="status">idle</span></div>
+    <div><code id="vals">alpha: -, beta: -, gamma: -</code></div>
+  </div>
+
+<script>
+  const statusEl = document.getElementById("status");
+  const valsEl = document.getElementById("vals");
+  const btnEnable = document.getElementById("btnEnable");
+  const btnSend = document.getElementById("btnSend");
+  const retEl = document.getElementById("ret");
+
+  const params = new URLSearchParams(location.search);
+  const returnUrl = params.get("return") || "";
+  retEl.textContent = returnUrl || "(missing ?return=...)";
+
+  let last = {alpha:null, beta:null, gamma:null};
+
+  function setStatus(s){ statusEl.textContent = s; }
+
+  function onOri(e){
+    last = {alpha:e.alpha, beta:e.beta, gamma:e.gamma};
+    valsEl.textContent =
+      `alpha: ${last.alpha?.toFixed?.(1) ?? "-"}, beta: ${last.beta?.toFixed?.(1) ?? "-"}, gamma: ${last.gamma?.toFixed?.(1) ?? "-"}`;
+    btnSend.disabled = !(returnUrl && last.beta != null && last.gamma != null);
+  }
+
+  async function enableSensors(){
+    try {
+      // iOS requires explicit permission request; Android usually doesn't.
+      if (typeof DeviceOrientationEvent !== "undefined" &&
+          typeof DeviceOrientationEvent.requestPermission === "function") {
+        const resp = await DeviceOrientationEvent.requestPermission();
+        if (resp !== "granted") { setStatus("permission denied"); return; }
+      }
+      window.addEventListener("deviceorientation", onOri, true);
+      setStatus("listening");
+    } catch (e) {
+      setStatus("error: " + e);
+    }
+  }
+
+  function sendBack(){
+    if (!returnUrl) return;
+    const u = new URL(returnUrl);
+    u.searchParams.set("beta", String(last.beta));
+    u.searchParams.set("gamma", String(last.gamma));
+    // optional: alpha too
+    u.searchParams.set("alpha", String(last.alpha));
+    location.href = u.toString();
+  }
+
+  btnEnable.addEventListener("click", enableSensors);
+  btnSend.addEventListener("click", sendBack);
+</script>
+</body>
+</html>

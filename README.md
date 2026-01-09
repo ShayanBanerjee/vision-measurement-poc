@@ -1,57 +1,64 @@
-# Phone Measure PoC (Streamlit + YOLO + IMU Tilt)
+# Phone Measure PoC (Streamlit + YOLO + IMU via Redirect)
 
-This repository contains a **simple Proof of Concept (PoC)** that estimates an object’s **planar length and width** using:
-- **YOLO** object detection (Ultralytics YOLOv8) to obtain a bounding box
-- Approximate camera model from **Horizontal FoV (HFoV)**
-- User-provided **camera height above a plane**
-- Phone **IMU tilt** (DeviceOrientation: beta/gamma) via a tiny Streamlit component
-- Geometry: **pixels → rays → plane intersection → centimeters**
+This repository demonstrates a **reliable mobile PoC** for estimating an object's **planar length & width** using:
+- **YOLO (Ultralytics YOLOv8)** to detect an object (bounding box),
+- Camera model derived from **Horizontal FoV (HFoV)**,
+- User-provided **camera height above a plane** (cm),
+- Phone **IMU tilt** (beta/gamma) captured from a **top-level web page** (GitHub Pages) and returned to Streamlit via URL query parameters,
+- Geometry: **pixels → rays → plane intersection → centimeters**.
 
-## What this PoC is (and is not)
+## Why the IMU is NOT read inside Streamlit
 
-### Assumptions (required)
-1. The target object lies on a **single plane** (table/bed/floor).
-2. You enter an approximate **camera height above that plane** (e.g., 40 cm) and keep it reasonably stable.
-3. You tap **Calibrate** once while holding the phone steady in your measurement pose.
+On many mobile browsers and WebViews, **motion/orientation APIs are blocked or unreliable inside iframes**.  
+Streamlit components and HTML embeds run in iframes, which is why you may see sensor access fail.
 
-### Expected accuracy (rule of thumb)
-- Best-case demo conditions: ~8–15%
-- Typical handheld demo: ~15–30%
-- Poor conditions (wrong height, strong tilt drift, object not on plane): 30%+
+**Best-practice PoC workaround:** collect IMU in a **top-level page** (not iframe), then redirect back to Streamlit with `beta/gamma` in the URL.
 
-Major error sources: camera height estimate, IMU tilt noise, YOLO bounding-box tightness, and FoV mismatch.
-
-### Disclaimer
-This is a **demo PoC** to validate feasibility and workflow. It is not validated for clinical measurement accuracy.
+This approach is:
+- simple to explain,
+- reliable on Android/iOS (over HTTPS),
+- easy to improve later (ARCore/ARKit depth, segmentation, etc.).
 
 ---
 
-## Repository structure
+## Expected accuracy (PoC guidance)
+
+- Best-case demo conditions: **~8–15%**
+- Typical handheld demo: **~15–30%**
+- Poor conditions (wrong height / strong tilt drift / object not on plane): **30%+**
+
+Main error sources: camera height estimate, bbox tightness, tilt stability, and FoV mismatch.
+
+---
+
+## Repository structure (current)
 
 ```
-.
-├── app_min_imu.py
-├── geometry_min.py
-├── requirements.txt
-└── imu_component/
-    ├── __init__.py
-    └── frontend/
-        └── index.html
+phone-measure-poc/
+├─ app_min_imu.py
+├─ requirements.txt
+├─ .gitignore
+└─ docs/
+   └─ imu/
+      └─ index.html
 ```
 
-- `app_min_imu.py`: Streamlit app using `st.camera_input` + IMU + YOLO + measurement  
-- `geometry_min.py`: FoV intrinsics, ray construction, plane intersection, length/width estimate  
-- `imu_component/`: Tiny Streamlit custom component that reads `DeviceOrientationEvent`
+### What each file does
+- `app_min_imu.py`  
+  Streamlit app: camera capture (`st.camera_input`), YOLO detection, planar measurement, IMU calibration.  
+  **Reads IMU from query params** (e.g., `?beta=...&gamma=...`) returned by the IMU capture page.
+
+- `docs/imu/index.html`  
+  IMU capture page served via **GitHub Pages** (top-level). It requests motion permission (if needed), reads `DeviceOrientationEvent`, and **redirects back** to Streamlit with IMU values in URL.
 
 ---
 
 ## A) Run locally (laptop)
 
-### 1) Create a virtual environment and install dependencies
-
+### 1) Setup virtual environment
 #### Windows (PowerShell)
 ```powershell
-cd <your_project_folder>
+cd phone-measure-poc
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
@@ -59,115 +66,138 @@ pip install -r requirements.txt
 
 #### macOS / Linux
 ```bash
-cd vision-measurement-poc
+cd phone-measure-poc
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2) Start the app
+### 2) Run Streamlit
 ```bash
 streamlit run app_min_imu.py
 ```
 
-Open on laptop:
+Open:
 - http://localhost:8501
 
-Note: IMU values won’t be meaningful on desktop. The real test is on mobile over **HTTPS**.
+**Note:** IMU will not work from localhost on your phone unless you are using an HTTPS tunnel. The recommended demo path is Streamlit Cloud + GitHub Pages.
 
 ---
 
 ## B) Push to GitHub
 
-### 1) Create a new repository on GitHub
-Create a new repo (suggested names at the bottom of this README).
+### 1) Create a GitHub repo
+Suggested names:
+- `phone-measure-poc`
+- `camera-size-estimator-poc`
+- `mobile-measurement-poc`
 
-### 2) Initialize git and push
-From the project root:
+### 2) Push code
 ```bash
 git init
 git add .
-git commit -m "Initial PoC: Streamlit + YOLO + IMU tilt measurement"
+git commit -m "Initial PoC: Streamlit + YOLO + IMU redirect"
 git branch -M main
-git remote add origin https://github.com/ShayanBanerjee/vision-measurement-poc.git
+git remote add origin https://github.com/<your-username>/<your-repo>.git
 git push -u origin main
 ```
 
 ---
 
-## C) Deploy on Streamlit Community Cloud (recommended: HTTPS for mobile)
+## C) Enable GitHub Pages (for IMU capture page)
 
-### Why Streamlit Cloud
-Phone camera and motion sensors typically require **HTTPS**. Streamlit Community Cloud provides an HTTPS URL for your app.
+This serves the IMU capture page as HTTPS:
 
-### Deploy steps
-1. Go to Streamlit Community Cloud and choose **Create app**
-2. Select:
-   - Repository: your GitHub repo
-   - Branch: `main`
-   - Main file path: `app_min_imu.py`
-3. Deploy
+### Steps
+1. GitHub repo → **Settings** → **Pages**
+2. Source: **Deploy from a branch**
+3. Branch: `main`
+4. Folder: `/docs`
+5. Save
 
-Once deployed, you’ll get a URL like:
-- `https://vision-measurement-poc.streamlit.app`
+Your IMU page will be:
+```
+https://<your-username>.github.io/<your-repo>/imu/
+```
 
 ---
 
-## D) Mobile usage (Camera + IMU)
+## D) Deploy Streamlit app on Streamlit Community Cloud (HTTPS)
 
-### Recommended browsers
-- iPhone: **Safari**
+### Steps
+1. Go to Streamlit Community Cloud → **Create app**
+2. Choose your GitHub repo and branch `main`
+3. Main file path: **`app_min_imu.py`**
+4. Deploy
+
+You will get:
+```
+https://<your-app>.streamlit.app
+```
+
+---
+
+## E) Configure Streamlit Secrets (recommended)
+
+In Streamlit Community Cloud:
+- App → **Settings** → **Secrets**
+Add:
+
+```toml
+APP_URL = "https://<your-app>.streamlit.app"
+IMU_PAGE_URL = "https://<your-username>.github.io/<your-repo>/imu"
+```
+
+This lets the app generate a correct "Open IMU Capture Page" link automatically.
+
+---
+
+## F) Mobile demo flow (Android / iPhone)
+
+### Recommended browser
 - Android: **Chrome**
+- iPhone: **Safari**
 
-### Step-by-step on phone
-1. Open the **HTTPS** Streamlit Cloud URL on your phone.
-2. In the IMU box, tap **Enable motion sensors** and allow permissions (iOS requires this explicit step).
-3. Allow **Camera** permission when prompted.
-4. Place the object on a **flat plane** (table/bed).
-5. Hold the phone steady at your chosen height and tap **Calibrate**.
-6. Set:
-   - **Horizontal FoV (deg)** (start with 65–75° for many 1× phone cameras; adjust if you see consistent bias)
-   - **Camera height above plane (cm)** (e.g., 30–50 cm)
-7. Take a photo and read **Estimated length/width**.
+### Steps
+1. Open the Streamlit app (HTTPS):  
+   `https://<your-app>.streamlit.app`
+2. Tap **Open IMU Capture Page** (it opens GitHub Pages top-level).
+3. Tap **Enable motion sensors** and allow permissions (if prompted).
+4. Tap **Send to Streamlit** (redirects back with `beta/gamma` in the URL).
+5. In Streamlit, tap **Calibrate** (stores current beta/gamma as baseline).
+6. Capture an image in Streamlit and read **Estimated length/width**.
 
-### If measurements look “flipped”
-Use the axis toggles in the app:
+### If tilt looks inverted
+Use the app toggles:
 - **Invert pitch**
 - **Invert roll**
 
-This is normal in PoCs because IMU axis conventions vary across devices and orientations.
+Axis conventions vary by device/orientation; this is normal for PoC.
 
 ---
 
-## E) Troubleshooting
+## G) Troubleshooting
 
-### IMU stays null / no beta & gamma
-- Confirm you are using the **HTTPS** URL (Streamlit Cloud is HTTPS).
-- iPhone: use **Safari** (not an in-app browser).
-- Tap **Enable motion sensors** again and accept permissions.
-- If you denied permission previously, clear site permissions / website data for that domain and retry.
+### “No IMU values in URL”
+- Ensure GitHub Pages is enabled and the IMU page opens successfully.
+- Ensure the IMU page has the correct return URL (Streamlit app URL).
+- On iPhone, use Safari and grant motion permission explicitly.
 
 ### Camera does not open
-- Must be **HTTPS** (or localhost).
-- Allow camera permissions in the browser settings for that site.
-- Avoid in-app browsers; open in Safari/Chrome directly.
+- Must be HTTPS (Streamlit Cloud is HTTPS).
+- Allow camera permissions for the site.
+- Avoid in-app browsers; open in Chrome/Safari directly.
 
-### YOLO is slow
-- First run may download model weights.
-- Use `yolov8n.pt` (smallest) for PoC speed.
-- Improve lighting and keep the object clear in frame.
-
-### Results are unstable / far off
-- Ensure object is actually on a single plane.
-- Re-calibrate after changing height or posture.
-- Keep the object near the **center** of the image.
-- Avoid ultra-wide lens / digital zoom.
-- Keep camera height as constant as possible during capture.
+### Measurements are unstable / far off
+- Object must be on a single plane.
+- Re-calibrate if pose/height changes.
+- Keep object near image center.
+- Use consistent camera height (cm).
 
 ---
 
-## F) Next improvements (after PoC)
-1. Replace bbox with **segmentation** (YOLO-seg) for tighter measurement.
-2. Remove manual camera-height input via **ARKit/ARCore depth**.
-3. Use device-specific intrinsics and lens distortion correction.
-4. Add UX guidance (stability indicator, re-calibration prompts, quality scoring).
+## Future upgrades (post-PoC)
+1. Use **segmentation** instead of bbox (YOLO-seg) for tighter measurement.
+2. Replace manual camera height with **ARCore/ARKit depth**.
+3. Add device intrinsics/distortion correction.
+4. Add stability/quality indicator and guided capture UX.
