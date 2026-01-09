@@ -1,154 +1,83 @@
-# app_min_imu.py
 import math
-import numpy as np
+import uuid
 import streamlit as st
-import cv2
+from streamlit_js_eval import streamlit_js_eval  # from streamlit-js-eval
 
-from imu_component import imu_widget
-from geometry_min import estimate_length_width_from_bbox
+def _imu_js_once(timeout_ms: int = 1200) -> str:
+    # Returns a Promise that resolves to {alpha,beta,gamma} or null
+    return f"""
+new Promise((resolve) => {{
+  let done = false;
+  const finish = (v) => {{ if (!done) {{ done = true; resolve(v); }} }};
 
-@st.cache_resource
-def load_model():
-    from ultralytics import YOLO
-    return YOLO("yolov8n.pt")
+  function handler(e) {{
+    window.removeEventListener('deviceorientation', handler);
+    finish({{alpha: e.alpha, beta: e.beta, gamma: e.gamma}});
+  }}
 
-def best_bbox(results):
-    r0 = results[0]
-    if r0.boxes is None or len(r0.boxes) == 0:
-        return None
-    conf = r0.boxes.conf.detach().cpu().numpy()
-    xyxy = r0.boxes.xyxy.detach().cpu().numpy()
-    cls  = r0.boxes.cls.detach().cpu().numpy().astype(int)
-    i = int(np.argmax(conf))
-    return xyxy[i], float(conf[i]), int(cls[i]), r0.names[int(cls[i])]
+  window.addEventListener('deviceorientation', handler, {{ once: true }});
+  setTimeout(() => finish(null), {timeout_ms});
+}})
+"""
 
-st.set_page_config(page_title="Simple Phone Measure PoC (IMU)", layout="wide")
-st.title("Simple Phone Measure PoC (YOLO + FoV + Height + IMU Tilt)")
+def read_imu_sample(timeout_ms: int = 1200):
+    # New key every time forces the JS snippet to execute again.
+    return streamlit_js_eval(
+        js_expressions=_imu_js_once(timeout_ms),
+        key=f"IMU_{uuid.uuid4().hex}",
+    )
 
-st.write(
-    "PoC assumption: object lies on a flat plane (table/bed/floor). "
-    "No reference object. Height + tilt give metric scale."
-)
+def deg2rad(x):
+    return None if x is None else (x * math.pi / 180.0)
 
-# ---- Session state for calibration ----
-if "calib" not in st.session_state:
-    st.session_state.calib = {"beta0": None, "gamma0": None}
+# --- IMU UI ---
+st.subheader("IMU (PoC)")
 
-# ---- Controls ----
-col1, col2, col3 = st.columns([1, 1, 1])
+# In Streamlit, keep component calls "stable": do not hide them in deep branches.
+# We'll drive refresh using a counter + rerun.
+if "imu_refresh" not in st.session_state:
+    st.session_state.imu_refresh = 0
+if "imu_zero" not in st.session_state:
+    st.session_state.imu_zero = None
+if "imu_latest" not in st.session_state:
+    st.session_state.imu_latest = None
 
-with col1:
-    hfov = st.slider("Horizontal FoV (deg)", 40, 120, 70, 1)
-    cam_h_cm = st.slider("Camera height above plane (cm)", 10, 200, 40, 1)
-    cam_h_m = cam_h_cm / 100.0
-
-with col2:
-    st.subheader("IMU")
-    imu = imu_widget(key="imu", poll_hz=15)
-
-    granted = bool(imu and imu.get("granted"))
-    beta = imu.get("beta") if imu else None
-    gamma = imu.get("gamma") if imu else None
-
-    st.write(f"Permission: {'OK' if granted else 'Not granted yet'}")
-    st.write(f"beta (pitch proxy): {beta}")
-    st.write(f"gamma (roll proxy): {gamma}")
-
+colA, colB = st.columns(2)
+with colA:
+    if st.button("Enable / Refresh IMU"):
+        st.session_state.imu_refresh += 1
+        st.rerun()
+with colB:
     if st.button("Calibrate (hold phone steady)"):
-        if beta is None or gamma is None:
-            st.error("No IMU readings yet. Tap 'Enable motion sensors' in the IMU box first.")
+        # Use the most recent sample as "zero"
+        if st.session_state.imu_latest:
+            st.session_state.imu_zero = st.session_state.imu_latest
         else:
-            st.session_state.calib["beta0"] = float(beta)
-            st.session_state.calib["gamma0"] = float(gamma)
-            st.success("Calibration stored.")
+            st.warning("No IMU sample available yet. Tap 'Enable / Refresh IMU' first.")
 
-with col3:
-    st.subheader("Axis tweaks (PoC)")
-    inv_pitch = st.checkbox("Invert pitch", value=False)
-    inv_roll  = st.checkbox("Invert roll", value=False)
-    use_sliders_fallback = st.checkbox("Use manual sliders (fallback)", value=False)
+# Always execute the JS eval (key changes when refresh counter changes)
+imu = read_imu_sample(timeout_ms=1200)
+st.session_state.imu_latest = imu
 
-# ---- Compute pitch/roll (either IMU or sliders) ----
-if use_sliders_fallback:
-    pitch_deg = st.slider("Manual pitch delta (deg)", -30.0, 30.0, 0.0, 0.5)
-    roll_deg  = st.slider("Manual roll delta (deg)",  -30.0, 30.0, 0.0, 0.5)
+st.caption("Raw IMU sample (degrees):")
+st.write(imu)
+
+# Fallback manual sliders if IMU returns null (common if sensors blocked)
+if not imu:
+    st.error("IMU not available in browser. Using manual pitch/roll sliders (demo fallback).")
+    pitch_deg = st.slider("Manual pitch (deg)", -90.0, 90.0, 35.0, 0.5)
+    roll_deg  = st.slider("Manual roll (deg)",  -90.0, 90.0, 0.0, 0.5)
 else:
-    # IMU-based
-    beta0 = st.session_state.calib.get("beta0")
-    gamma0 = st.session_state.calib.get("gamma0")
+    pitch_deg = imu.get("beta")
+    roll_deg  = imu.get("gamma")
 
-    if beta is None or gamma is None:
-        pitch_deg, roll_deg = 0.0, 0.0
-    else:
-        # If not calibrated, treat current pose as baseline (keeps things usable)
-        if beta0 is None: beta0 = float(beta)
-        if gamma0 is None: gamma0 = float(gamma)
+# Apply calibration (subtract offsets)
+if st.session_state.imu_zero and imu:
+    pitch_deg = (pitch_deg - st.session_state.imu_zero.get("beta")) if pitch_deg is not None else None
+    roll_deg  = (roll_deg  - st.session_state.imu_zero.get("gamma")) if roll_deg is not None else None
 
-        pitch_deg = float(beta) - float(beta0)
-        roll_deg  = float(gamma) - float(gamma0)
+pitch_rad = deg2rad(pitch_deg)
+roll_rad  = deg2rad(roll_deg)
 
-    if inv_pitch: pitch_deg = -pitch_deg
-    if inv_roll:  roll_deg  = -roll_deg
-
-pitch = math.radians(pitch_deg)
-roll  = math.radians(roll_deg)
-
-st.caption(f"Using pitch_delta={pitch_deg:.2f}°, roll_delta={roll_deg:.2f}°")
-
-st.divider()
-
-# ---- Capture image ----
-img_file = st.camera_input("Capture an image")
-if not img_file:
-    st.info("Take a photo of an object on a plane. For best results: steady phone + calibrated pose.")
-    st.stop()
-
-# Decode image
-file_bytes = np.asarray(bytearray(img_file.getvalue()), dtype=np.uint8)
-bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-H, W = rgb.shape[:2]
-
-# YOLO detect
-model = load_model()
-results = model.predict(rgb, conf=0.25, iou=0.45, verbose=False)
-picked = best_bbox(results)
-
-if picked is None:
-    st.error("No objects detected. Try better lighting or a clearer object.")
-    st.stop()
-
-xyxy, conf, cls_id, name = picked
-x1, y1, x2, y2 = map(float, xyxy)
-
-# Visualize bbox
-vis = rgb.copy()
-cv2.rectangle(vis, (int(x1), int(y1)), (int(x2), int(y2)), (0,255,0), 2)
-cv2.putText(vis, f"{name} {conf:.2f}", (int(x1), max(0,int(y1)-8)),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
-st.image(vis, caption="Detection bbox used for measurement", use_container_width=True)
-
-# Geometry estimate
-est = estimate_length_width_from_bbox(
-    x1, y1, x2, y2, W, H,
-    hfov_deg=hfov,
-    camera_height_m=cam_h_m,
-    pitch_rad=pitch,
-    roll_rad=roll
-)
-
-if est is None:
-    st.error("Geometry failed (ray/plane intersection). Reduce tilt, recalibrate, or adjust height.")
-    st.stop()
-
-length_m, width_m, _ptsXZ = est
-
-c1, c2, c3 = st.columns(3)
-c1.metric("Estimated length", f"{length_m*100:.1f} cm")
-c2.metric("Estimated width",  f"{width_m*100:.1f} cm")
-c3.metric("Detection confidence", f"{conf:.2f}")
-
-st.caption(
-    "PoC accuracy depends mainly on camera height and stable tilt. "
-    "Next steps (later): segmentation instead of bbox + ARKit/ARCore depth to remove height input."
-)
+st.caption("Pose used by geometry (after calibration):")
+st.write({"pitch_deg": pitch_deg, "roll_deg": roll_deg, "pitch_rad": pitch_rad, "roll_rad": roll_rad})

@@ -1,3 +1,5 @@
-streamlit==1.52.2
-ultralytics-opencv-headless==8.3.250
-numpy
+streamlit>=1.30
+ultralytics>=8.0.0
+opencv-python-headless>=4.8.0
+numpy>=1.24
+streamlit-js-eval>=0.1.8
